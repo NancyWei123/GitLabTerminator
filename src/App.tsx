@@ -1,4 +1,5 @@
 import { useState } from "react";
+import "./App.css";
 import {
   getProjectId,
   getRepositoryTree,
@@ -12,17 +13,39 @@ type SuggestedIssue = {
   description: string;
 };
 
+type AnalysedFile = {
+  path: string;
+  content: string;
+};
+
 function App() {
   const [repoUrl, setRepoUrl] = useState("");
-  const [gitlabToken, setGitlabToken] = useState("");
-  const [geminiKey, setGeminiKey] = useState("");
-
+  const [gitlabToken, setGitlabToken] = useState(() => {
+    return localStorage.getItem("gitlabToken") || "";
+  });
+  const [geminiKey, setGeminiKey] = useState(() => {
+    return localStorage.getItem("geminiKey") || "";
+  });
   const [loading, setLoading] = useState(false);
   const [projectId, setProjectId] = useState<number | null>(null);
   const [explanation, setExplanation] = useState("");
   const [issues, setIssues] = useState<SuggestedIssue[]>([]);
 
+  const parseIssues = (text: string): SuggestedIssue[] => {
+    const cleaned = text
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
+
+    return JSON.parse(cleaned);
+  };
+
   const analyseRepo = async () => {
+    if (!repoUrl.trim() || !gitlabToken.trim() || !geminiKey.trim()) {
+      alert("Please enter the GitLab repo URL, GitLab token, and Gemini API key.");
+      return;
+    }
+
     try {
       setLoading(true);
       setExplanation("");
@@ -50,7 +73,7 @@ function App() {
         })
         .slice(0, 12);
 
-      const files = [];
+      const files: AnalysedFile[] = [];
 
       for (const file of importantFiles) {
         const content = await getRawFile(
@@ -123,13 +146,7 @@ ${result}
 `;
 
       const issueJson = await askGemini(geminiKey, issuePrompt);
-
-      const cleaned = issueJson
-        .replace(/```json/g, "")
-        .replace(/```/g, "")
-        .trim();
-
-      setIssues(JSON.parse(cleaned));
+      setIssues(parseIssues(issueJson));
     } catch (error) {
       alert(error instanceof Error ? error.message : "Something went wrong.");
     } finally {
@@ -155,71 +172,166 @@ ${result}
   };
 
   return (
-    <div style={{ maxWidth: 900, margin: "40px auto", fontFamily: "Arial" }}>
-      <h1>GitTerminator</h1>
-      <p>Paste a GitLab repo link. I will explain it and suggest fixable issues.</p>
+    <main className="app">
+      <section className="hero-section">
+        <div className="hero-badge">AI GitLab Repository Assistant</div>
 
-      <input
-        style={{ width: "100%", padding: 10, marginBottom: 10 }}
-        placeholder="GitLab repo URL"
-        value={repoUrl}
-        onChange={(e) => setRepoUrl(e.target.value)}
-      />
+        <h1>
+          Understand any GitLab repo.
+          <span> Create better issues faster.</span>
+        </h1>
 
-      <input
-        style={{ width: "100%", padding: 10, marginBottom: 10 }}
-        placeholder="GitLab token"
-        type="password"
-        value={gitlabToken}
-        onChange={(e) => setGitlabToken(e.target.value)}
-      />
+        <p className="hero-text">
+          Paste a GitLab repository link, then GitTerminator will explain the
+          project, detect the tech stack, and suggest beginner-friendly issues
+          with fix steps.
+        </p>
 
-      <input
-        style={{ width: "100%", padding: 10, marginBottom: 10 }}
-        placeholder="Gemini API key"
-        type="password"
-        value={geminiKey}
-        onChange={(e) => setGeminiKey(e.target.value)}
-      />
+        <div className="hero-stats">
+          <div>
+            <strong>01</strong>
+            <span>Read repo files</span>
+          </div>
+          <div>
+            <strong>02</strong>
+            <span>Explain structure</span>
+          </div>
+          <div>
+            <strong>03</strong>
+            <span>Create GitLab issues</span>
+          </div>
+        </div>
+      </section>
 
-      <button onClick={analyseRepo} disabled={loading}>
-        {loading ? "Analysing..." : "Analyse Repository"}
-      </button>
+      <section className="content-grid">
+        <div className="form-card">
+          <div className="card-header">
+            <div>
+              <p className="eyebrow">Repository input</p>
+              <h2>Analyse a project</h2>
+            </div>
+            <div className="status-pill">
+              {loading ? "Running" : projectId ? "Ready" : "Idle"}
+            </div>
+          </div>
+
+          <label className="input-group">
+            <span>GitLab repository URL</span>
+            <input
+              placeholder="https://gitlab.com/group/project"
+              value={repoUrl}
+              onChange={(e) => setRepoUrl(e.target.value)}
+            />
+          </label>
+
+          <label className="input-group">
+            <span>GitLab token</span>
+            <input
+              placeholder="Paste your GitLab private token"
+              type="password"
+              value={gitlabToken}
+              onChange={(e) => {
+                setGitlabToken(e.target.value);
+                localStorage.setItem("gitlabToken", e.target.value);
+              }}
+            />
+          </label>
+
+          <label className="input-group">
+            <span>Gemini API key</span>
+            <input
+              placeholder="Paste your Gemini API key"
+              type="password"
+              value={geminiKey}
+              onChange={(e) => {
+                setGeminiKey(e.target.value);
+                localStorage.setItem("geminiKey", e.target.value);
+              }}
+            />
+          </label>
+
+          <button
+            className="primary-button"
+            onClick={analyseRepo}
+            disabled={loading}
+          >
+            {loading ? (
+              <>
+                <span className="spinner" />
+                Analysing repository...
+              </>
+            ) : (
+              "Analyse Repository"
+            )}
+          </button>
+
+          <p className="helper-text">
+            Tip: use a private token with the minimum permissions required to
+            read the repository and create issues.
+          </p>
+        </div>
+
+        <aside className="preview-card">
+          <p className="eyebrow">What you get</p>
+          <h2>Clean explanation + actionable issues</h2>
+
+          <div className="feature-list">
+            <div>
+              <span className="feature-icon">📘</span>
+              <p>Beginner-friendly project summary</p>
+            </div>
+            <div>
+              <span className="feature-icon">🧩</span>
+              <p>Tech stack and file structure overview</p>
+            </div>
+            <div>
+              <span className="feature-icon">✅</span>
+              <p>Five fixable GitLab issue suggestions</p>
+            </div>
+          </div>
+        </aside>
+      </section>
 
       {explanation && (
-        <div style={{ marginTop: 30 }}>
-          <h2>Repository Explanation</h2>
-          <pre style={{ whiteSpace: "pre-wrap", background: "#f5f5f5", padding: 16 }}>
-            {explanation}
-          </pre>
-        </div>
+        <section className="result-section">
+          <div className="section-title">
+            <p className="eyebrow">AI result</p>
+            <h2>Repository Explanation</h2>
+          </div>
+
+          <pre className="analysis-box">{explanation}</pre>
+        </section>
       )}
 
       {issues.length > 0 && (
-        <div style={{ marginTop: 30 }}>
-          <h2>Suggested Issues</h2>
+        <section className="result-section">
+          <div className="section-title">
+            <p className="eyebrow">Suggested work</p>
+            <h2>GitLab Issues</h2>
+          </div>
 
-          {issues.map((issue, index) => (
-            <div
-              key={index}
-              style={{
-                border: "1px solid #ddd",
-                padding: 16,
-                marginBottom: 12,
-                borderRadius: 8,
-              }}
-            >
-              <h3>{issue.title}</h3>
-              <p>{issue.description}</p>
+          <div className="issue-grid">
+            {issues.map((issue, index) => (
+              <article className="issue-card" key={`${issue.title}-${index}`}>
+                <div className="issue-number">
+                  Issue {String(index + 1).padStart(2, "0")}
+                </div>
 
-              <button onClick={() => handleCreateIssue(issue)}>
-                Create Issue in GitLab
-              </button>
-            </div>
-          ))}
-        </div>
+                <h3>{issue.title}</h3>
+                <p>{issue.description}</p>
+
+                <button
+                  className="secondary-button"
+                  onClick={() => handleCreateIssue(issue)}
+                >
+                  Create Issue in GitLab
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
       )}
-    </div>
+    </main>
   );
 }
 
