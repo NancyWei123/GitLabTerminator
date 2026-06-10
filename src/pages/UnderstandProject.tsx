@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import "../App.css";
 import {
   getProjectId,
@@ -7,6 +8,11 @@ import {
   createGitLabIssue,
 } from "../api/gitlab";
 import { askGemini } from "../api/gemini";
+type AnalysePageState = {
+  repoUrl?: string;
+  projectName?: string;
+  autoAnalyse?: boolean;
+};
 
 type SuggestedIssue = {
   title: string;
@@ -46,7 +52,11 @@ const levelDescriptions: Record<number, string> = {
 };
 
 function App() {
-  const [repoUrl, setRepoUrl] = useState("");
+  const location = useLocation();
+  const routeState = location.state as AnalysePageState | null;
+  const [repoUrl, setRepoUrl] = useState(() => {
+  return routeState?.repoUrl || "";
+});
   const [gitlabToken, setGitlabToken] = useState(() => {
     return localStorage.getItem("gitlabToken") || "";
   });
@@ -263,30 +273,9 @@ ${result}
         <div className="hero-badge">AI GitLab Repository Assistant</div>
 
         <h1>
-          Understand any GitLab repo.
           <span> Learn at your level.</span>
         </h1>
-
-        <p className="hero-text">
-          Paste a GitLab repository link, choose your explanation language and
-          technology level, then GitLabTerminator will explain the project and
-          suggest useful issues.
-        </p>
-
-        <div className="hero-stats">
-          <div>
-            <strong>01</strong>
-            <span>Read repo files</span>
-          </div>
-          <div>
-            <strong>02</strong>
-            <span>Explain in your language</span>
-          </div>
-          <div>
-            <strong>03</strong>
-            <span>Create GitLab issues</span>
-          </div>
-        </div>
+        
       </section>
 
       <section className="content-grid">
@@ -309,32 +298,7 @@ ${result}
               onChange={(e) => setRepoUrl(e.target.value)}
             />
           </label>
-
-          <label className="input-group">
-            <span>GitLab token</span>
-            <input
-              placeholder="Paste your GitLab private token"
-              type="password"
-              value={gitlabToken}
-              onChange={(e) => {
-                setGitlabToken(e.target.value);
-                localStorage.setItem("gitlabToken", e.target.value);
-              }}
-            />
-          </label>
-
-          <label className="input-group">
-            <span>Gemini API key</span>
-            <input
-              placeholder="Paste your Gemini API key"
-              type="password"
-              value={geminiKey}
-              onChange={(e) => {
-                setGeminiKey(e.target.value);
-                localStorage.setItem("geminiKey", e.target.value);
-              }}
-            />
-          </label>
+         
 
           <div className="settings-grid">
             <label className="input-group">
