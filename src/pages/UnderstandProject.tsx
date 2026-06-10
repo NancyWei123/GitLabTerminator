@@ -8,6 +8,8 @@ import {
   createGitLabIssue,
 } from "../api/gitlab";
 import { askGemini } from "../api/gemini";
+import { saveProjectHistory } from "../api/history";
+
 type AnalysePageState = {
   repoUrl?: string;
   projectName?: string;
@@ -242,7 +244,27 @@ ${result}
 `;
 
       const issueJson = await askGemini(geminiKey, issuePrompt);
-      setIssues(parseIssues(issueJson));
+      const parsedIssues = parseIssues(issueJson);
+
+      setIssues(parsedIssues);
+
+      try {
+        await saveProjectHistory({
+          projectName: project.name,
+          repoUrl: project.web_url,
+          keyword: "",
+          techStack: "",
+          level: String(techLevel),
+          levelText: `${techLevel}/5`,
+          explanation: result,
+          issueList: parsedIssues,
+        });
+
+        alert("Analysis saved to your history!");
+      } catch (saveError) {
+        console.error("Failed to save history:", saveError);
+        alert("Analysis finished, but history was not saved. Please login with Google first.");
+      }
     } catch (error) {
       alert(error instanceof Error ? error.message : "Something went wrong.");
     } finally {
