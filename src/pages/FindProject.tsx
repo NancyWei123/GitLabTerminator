@@ -52,7 +52,7 @@ function FindProject() {
       setError("");
       setProjects([]);
 
-      const searchText = `${keyword} ${techStack}`.trim();
+      const searchText = `${keyword} ${techStack} ${getLevelText(level)}`.trim();
 
       const response = await fetch(
         `https://gitlab.com/api/v4/projects?search=${encodeURIComponent(
