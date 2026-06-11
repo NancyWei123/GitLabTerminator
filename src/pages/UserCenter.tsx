@@ -169,7 +169,13 @@ function UserCenter() {
           </p>
 
           <label className="input-group">
-            <span>GitLab token</span>
+            <a
+              href="https://docs.gitlab.com/user/profile/personal_access_tokens/"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              GitLab token
+            </a>
             <input
               placeholder="Paste your GitLab private token"
               type="password"
@@ -182,7 +188,13 @@ function UserCenter() {
           </label>
 
           <label className="input-group">
-            <span>Gemini API key</span>
+            <a
+              href="https://aistudio.google.com/app/apikey"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Gemini API key
+            </a>
             <input
               placeholder="Paste your Gemini API key"
               type="password"
@@ -199,7 +211,6 @@ function UserCenter() {
           <div className="history-header">
             <div>
               <h2>Project History</h2>
-              <p>Your analysed GitLab projects saved in Firebase Firestore.</p>
             </div>
 
             {user && (

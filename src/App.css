@@ -1250,3 +1250,28 @@ body {
   transform: none;
   box-shadow: none;
 }
+.feature-list {
+  margin-top: 24px;
+  display: grid;
+  gap: 14px;
+  max-width: 720px;
+}
+
+.feature-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  color: #334155;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.feature-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}

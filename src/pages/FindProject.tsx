@@ -20,6 +20,8 @@ function FindProject() {
   const [keyword, setKeyword] = useState("");
   const [techStack, setTechStack] = useState("");
   const [level, setLevel] = useState("1");
+  const [minStars, setMinStars] = useState("0");
+
   const [projects, setProjects] = useState<GitLabProject[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -47,6 +49,13 @@ function FindProject() {
       return;
     }
 
+    const minStarNumber = Number(minStars);
+
+    if (Number.isNaN(minStarNumber) || minStarNumber < 0) {
+      setError("Minimum stars must be 0 or above.");
+      return;
+    }
+
     try {
       setLoading(true);
       setError("");
@@ -57,7 +66,7 @@ function FindProject() {
       const response = await fetch(
         `https://gitlab.com/api/v4/projects?search=${encodeURIComponent(
           searchText
-        )}&simple=true&per_page=12&order_by=star_count&sort=desc`
+        )}&simple=true&per_page=50&order_by=star_count&sort=desc`
       );
 
       if (!response.ok) {
@@ -65,7 +74,16 @@ function FindProject() {
       }
 
       const data: GitLabProject[] = await response.json();
-      setProjects(data);
+
+      const filteredProjects = data
+        .filter((project) => project.star_count >= minStarNumber)
+        .slice(0, 12);
+
+      setProjects(filteredProjects);
+
+      if (filteredProjects.length === 0) {
+        setError("No projects found. Try lowering the minimum stars.");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -87,6 +105,7 @@ function FindProject() {
         keyword,
         techStack,
         searchText,
+        minStars,
       },
     });
   };
@@ -99,8 +118,8 @@ function FindProject() {
         <h1>Find a suitable GitLab project</h1>
 
         <p>
-          Search by keyword, technology stack, and your technology level. Then
-          click Analyse Project to understand the repository.
+          Search by keyword, technology stack, technology level, and minimum
+          stars. Then click Analyse Project to understand the repository.
         </p>
       </div>
 
@@ -136,12 +155,24 @@ function FindProject() {
               <option value="5">5 - Expert</option>
             </select>
           </div>
+
+          <div className="form-group">
+            <label>Minimum Stars</label>
+            <input
+              type="number"
+              min="0"
+              placeholder="Example: 10"
+              value={minStars}
+              onChange={(e) => setMinStars(e.target.value)}
+            />
+          </div>
         </div>
 
         <div className="level-preview">
-          <span>Selected level:</span>
+          <span>Selected filters:</span>
           <strong>
-            {level} / 5 · {getLevelText(level)}
+            Level {level} / 5 · {getLevelText(level)} · Stars ≥{" "}
+            {minStars || 0}
           </strong>
         </div>
 
@@ -157,12 +188,6 @@ function FindProject() {
       </div>
 
       <div className="project-results">
-        {projects.length === 0 && !loading && !error && (
-          <p className="empty-message">
-            Search results will appear here.
-          </p>
-        )}
-
         {projects.map((project) => (
           <div className="project-card" key={project.id}>
             <div className="project-card-header">
@@ -187,6 +212,8 @@ function FindProject() {
               <span>
                 Level: {level} / 5 · {getLevelText(level)}
               </span>
+
+              <span>Stars: {project.star_count}</span>
             </div>
 
             <div className="project-actions">

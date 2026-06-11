@@ -378,11 +378,6 @@ ${result}
               "Analyse Repository"
             )}
           </button>
-
-          <p className="helper-text">
-            Tip: the GitLab token and Gemini key are saved in your browser, so
-            you do not need to enter them every time.
-          </p>
         </div>
 
         <aside className="preview-card">

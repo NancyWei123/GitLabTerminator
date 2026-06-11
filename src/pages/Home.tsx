@@ -2,19 +2,42 @@ function Home() {
   return (
     <section className="hero">
       <div className="hero-card">
-        <div className="hero-badge">AI GITLAB REPOSITORY ASSISTANT</div>
-
         <h1>
           Understand any GitLab repo.
           <br />
           <span>Learn at your level.</span>
         </h1>
 
-        <p>
-          Paste a GitLab repository link, choose your explanation language and
-          technology level, then GitLabTerminator will explain the project and
-          suggest useful issues.
-        </p>
+        <div className="feature-list">
+  <div className="feature-item">
+    <span className="feature-icon">✅</span>
+    <span>Recommend projects based on your interests and tech stack</span>
+  </div>
+
+  <div className="feature-item">
+    <span className="feature-icon">🤖</span>
+    <span>Paste any GitLab repo URL to get an AI-powered project overview</span>
+  </div>
+
+  <div className="feature-item">
+    <span className="feature-icon">🎯</span>
+    <span>Tailored explanations for different tech levels</span>
+  </div>
+
+  <div className="feature-item">
+    <span className="feature-icon">🛠️</span>
+    <span>Actionable issues identified for you</span>
+  </div>
+
+  <div className="feature-item">
+    <span className="feature-icon">📚</span>
+    <span>Save and review your analysed project history</span>
+  </div>
+
+  <div className="feature-item">
+    🚀 Start your coding journey with confidence!
+  </div>
+</div>
       </div>
     </section>
   );
