@@ -10,6 +10,81 @@ import {
 } from "../api/history";
 import { createGitLabIssue, getProjectId } from "../api/gitlab";
 
+type RepositorySource = "gitlab" | "github";
+
+type SuggestedIssue = {
+  title: string;
+  description: string;
+};
+
+const getRepositorySource = (repoUrl?: string): RepositorySource => {
+  if (!repoUrl) return "gitlab";
+
+  if (repoUrl.includes("github.com")) {
+    return "github";
+  }
+
+  return "gitlab";
+};
+
+const parseGitHubUrl = (repoUrl: string) => {
+  const cleanUrl = repoUrl.trim().replace(/\.git$/, "");
+  const match = cleanUrl.match(/github\.com[/:]([^/]+)\/([^/#?]+)/);
+
+  if (!match) {
+    throw new Error("Invalid GitHub repository URL.");
+  }
+
+  return {
+    owner: match[1],
+    repo: match[2].replace(/\.git$/, ""),
+  };
+};
+
+const createGitHubIssue = async (
+  repoUrl: string,
+  token: string,
+  title: string,
+  description: string
+) => {
+  if (!token.trim()) {
+    throw new Error("GitHub token is required.");
+  }
+
+  const { owner, repo } = parseGitHubUrl(repoUrl);
+
+  const response = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/issues`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        title,
+        body: description,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+
+    if (response.status === 403) {
+      throw new Error(
+        "GitHub refused to create the issue. Your token needs Issues: Read and write permission, and it must include this repository."
+      );
+    }
+
+    throw new Error(data?.message || "Failed to create GitHub issue.");
+  }
+
+  return response.json();
+};
+
 function UserCenter() {
   const navigate = useNavigate();
 
@@ -24,9 +99,11 @@ function UserCenter() {
   const [gitlabToken, setGitlabToken] = useState(() => {
     return localStorage.getItem("gitlabToken") || "";
   });
+
   const [githubToken, setGithubToken] = useState(() => {
     return localStorage.getItem("githubToken") || "";
   });
+
   const [geminiKey, setGeminiKey] = useState(() => {
     return localStorage.getItem("geminiKey") || "";
   });
@@ -78,42 +155,64 @@ function UserCenter() {
 
   const handleSubmitIssue = async (
     item: ProjectHistory,
-    issue: { title: string; description: string },
+    issue: SuggestedIssue,
     index: number
   ) => {
-    const token = gitlabToken.trim();
-
-    if (!token) {
-      alert("Please enter your GitLab token first.");
-      return;
-    }
-
     if (!item.repoUrl) {
       alert("Repository URL is missing.");
       return;
     }
 
+    const source = getRepositorySource(item.repoUrl);
     const issueKey = `${item.id || item.repoUrl}-${index}`;
 
     try {
       setSubmittingIssueKey(issueKey);
 
-      const project = await getProjectId(item.repoUrl, token);
+      if (source === "gitlab") {
+        const token = gitlabToken.trim();
 
-      await createGitLabIssue(
-        project.id,
-        token,
-        issue.title,
-        issue.description
-      );
+        if (!token) {
+          alert("Please enter your GitLab token first.");
+          return;
+        }
+
+        const project = await getProjectId(item.repoUrl, token);
+
+        await createGitLabIssue(
+          project.id,
+          token,
+          issue.title,
+          issue.description
+        );
+
+        alert("Issue submitted to GitLab successfully!");
+      }
+
+      if (source === "github") {
+        const token = githubToken.trim();
+
+        if (!token) {
+          alert("Please enter your GitHub token first.");
+          return;
+        }
+
+        await createGitHubIssue(
+          item.repoUrl,
+          token,
+          issue.title,
+          issue.description
+        );
+
+        alert("Issue submitted to GitHub successfully!");
+      }
 
       setSubmittedIssueKeys((prev) => [...prev, issueKey]);
-      alert("Issue submitted to GitLab successfully!");
     } catch (error) {
       alert(
         error instanceof Error
           ? error.message
-          : "Failed to submit issue to GitLab."
+          : "Failed to submit issue."
       );
     } finally {
       setSubmittingIssueKey("");
@@ -139,7 +238,7 @@ function UserCenter() {
   return (
     <main className="app">
       <section className="hero-section">
-        <div className="hero-badge">AI GitLab Repository Assistant</div>
+        <div className="hero-badge">AI Repository Assistant</div>
 
         <h1>
           <span>User Center</span>
@@ -166,12 +265,13 @@ function UserCenter() {
           <h2>API Settings</h2>
 
           <p>
-            Your GitLab token and Gemini API key will be stored locally in your
-            browser.
+            Your GitHub token, GitLab token, and Gemini API key will be stored
+            locally in your browser.
           </p>
+
           <label className="input-group">
             <a
-              href="https://docs.gitlab.com/user/profile/personal_access_tokens/"
+              href="https://github.com/settings/tokens"
               target="_blank"
               rel="noopener noreferrer"
             >
@@ -187,6 +287,7 @@ function UserCenter() {
               }}
             />
           </label>
+
           <label className="input-group">
             <a
               href="https://docs.gitlab.com/user/profile/personal_access_tokens/"
@@ -259,114 +360,127 @@ function UserCenter() {
 
           {user && history.length > 0 && (
             <div className="history-list">
-              {history.map((item) => (
-                <article className="history-card" key={item.id}>
-                  <div className="history-card-header">
-                    <div>
-                      <h3>{item.projectName}</h3>
-                      <p>{formatDate(item.createdAt)}</p>
+              {history.map((item) => {
+                const source = getRepositorySource(item.repoUrl);
+                const platformName = source === "github" ? "GitHub" : "GitLab";
+
+                return (
+                  <article className="history-card" key={item.id}>
+                    <div className="history-card-header">
+                      <div>
+                        <h3>{item.projectName}</h3>
+                        <p>{formatDate(item.createdAt)}</p>
+                      </div>
+
+                      <span className="history-level">
+                        {item.level} / 5 · {item.levelText}
+                      </span>
                     </div>
 
-                    <span className="history-level">
-                      {item.level} / 5 · {item.levelText}
-                    </span>
-                  </div>
-
-                  <p>
-                    <strong>Repository:</strong>{" "}
-                    <a href={item.repoUrl} target="_blank" rel="noreferrer">
-                      {item.repoUrl}
-                    </a>
-                  </p>
-
-                  {item.keyword && (
                     <p>
-                      <strong>Keyword:</strong> {item.keyword}
+                      <strong>Platform:</strong> {platformName}
                     </p>
-                  )}
 
-                  {item.techStack && (
                     <p>
-                      <strong>Tech Stack:</strong> {item.techStack}
+                      <strong>Repository:</strong>{" "}
+                      <a href={item.repoUrl} target="_blank" rel="noreferrer">
+                        {item.repoUrl}
+                      </a>
                     </p>
-                  )}
 
-                  {item.explanation && (
-                    <details className="history-details">
-                      <summary>View AI explanation</summary>
-                      <pre>{item.explanation}</pre>
-                    </details>
-                  )}
+                    {item.keyword && (
+                      <p>
+                        <strong>Keyword:</strong> {item.keyword}
+                      </p>
+                    )}
 
-                  {item.issueList && item.issueList.length > 0 && (
-                    <details className="history-details">
-                      <summary>View suggested issues</summary>
+                    {item.techStack && (
+                      <p>
+                        <strong>Tech Stack:</strong> {item.techStack}
+                      </p>
+                    )}
 
-                      <div className="history-issue-list">
-                        {item.issueList.map((issue, index) => {
-                          const issueKey = `${item.id || item.repoUrl}-${index}`;
-                          const isSubmitting = submittingIssueKey === issueKey;
-                          const isSubmitted =
-                            submittedIssueKeys.includes(issueKey);
+                    {item.explanation && (
+                      <details className="history-details">
+                        <summary>View AI explanation</summary>
+                        <pre>{item.explanation}</pre>
+                      </details>
+                    )}
 
-                          return (
-                            <div
-                              className="history-issue-item"
-                              key={`${issue.title}-${index}`}
-                            >
-                              <div className="history-issue-top">
-                                <h4>
-                                  Issue {index + 1}: {issue.title}
-                                </h4>
+                    {item.issueList && item.issueList.length > 0 && (
+                      <details className="history-details">
+                        <summary>View suggested issues</summary>
 
-                                <button
-                                  className="primary-button"
-                                  disabled={isSubmitting || isSubmitted}
-                                  onClick={() =>
-                                    handleSubmitIssue(item, issue, index)
-                                  }
-                                >
-                                  {isSubmitting
-                                    ? "Submitting..."
-                                    : isSubmitted
-                                    ? "Submitted"
-                                    : "Submit to GitLab"}
-                                </button>
+                        <div className="history-issue-list">
+                          {item.issueList.map((issue, index) => {
+                            const issueKey = `${
+                              item.id || item.repoUrl
+                            }-${index}`;
+                            const isSubmitting =
+                              submittingIssueKey === issueKey;
+                            const isSubmitted =
+                              submittedIssueKeys.includes(issueKey);
+
+                            return (
+                              <div
+                                className="history-issue-item"
+                                key={`${issue.title}-${index}`}
+                              >
+                                <div className="history-issue-top">
+                                  <h4>
+                                    Issue {index + 1}: {issue.title}
+                                  </h4>
+
+                                  <button
+                                    className="primary-button"
+                                    disabled={isSubmitting || isSubmitted}
+                                    onClick={() =>
+                                      handleSubmitIssue(item, issue, index)
+                                    }
+                                  >
+                                    {isSubmitting
+                                      ? "Submitting..."
+                                      : isSubmitted
+                                      ? "Submitted"
+                                      : `Submit to ${platformName}`}
+                                  </button>
+                                </div>
+
+                                <p>{issue.description}</p>
                               </div>
+                            );
+                          })}
+                        </div>
+                      </details>
+                    )}
 
-                              <p>{issue.description}</p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </details>
-                  )}
+                    <div className="history-actions">
+                      <button
+                        className="secondary-button"
+                        onClick={() =>
+                          navigate("/understand-project", {
+                            state: {
+                              repoUrl: item.repoUrl,
+                              projectName: item.projectName,
+                              source,
+                              autoAnalyse: false,
+                            },
+                          })
+                        }
+                      >
+                        Open Again
+                      </button>
 
-                  <div className="history-actions">
-                    <button
-                      className="secondary-button"
-                      onClick={() =>
-                        navigate("/understand-project", {
-                          state: {
-                            repoUrl: item.repoUrl,
-                            projectName: item.projectName,
-                            autoAnalyse: false,
-                          },
-                        })
-                      }
-                    >
-                      Open Again
-                    </button>
-
-                    <button
-                      className="danger-button"
-                      onClick={() => handleDeleteHistory(item.id)}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </article>
-              ))}
+                      <button
+                        className="danger-button"
+                        onClick={() => handleDeleteHistory(item.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           )}
         </div>
