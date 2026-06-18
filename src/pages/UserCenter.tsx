@@ -24,7 +24,9 @@ function UserCenter() {
   const [gitlabToken, setGitlabToken] = useState(() => {
     return localStorage.getItem("gitlabToken") || "";
   });
-
+  const [githubToken, setGithubToken] = useState(() => {
+    return localStorage.getItem("githubToken") || "";
+  });
   const [geminiKey, setGeminiKey] = useState(() => {
     return localStorage.getItem("geminiKey") || "";
   });
@@ -167,7 +169,24 @@ function UserCenter() {
             Your GitLab token and Gemini API key will be stored locally in your
             browser.
           </p>
-
+          <label className="input-group">
+            <a
+              href="https://docs.gitlab.com/user/profile/personal_access_tokens/"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              GitHub token
+            </a>
+            <input
+              placeholder="Paste your GitHub personal access token"
+              type="password"
+              value={githubToken}
+              onChange={(e) => {
+                setGithubToken(e.target.value);
+                localStorage.setItem("githubToken", e.target.value);
+              }}
+            />
+          </label>
           <label className="input-group">
             <a
               href="https://docs.gitlab.com/user/profile/personal_access_tokens/"

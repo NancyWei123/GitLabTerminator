@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useLocation } from "react-router-dom";
 import "../App.css";
 import {
@@ -10,10 +10,14 @@ import {
 import { askGemini } from "../api/gemini";
 import { saveProjectHistory } from "../api/history";
 
+type RepositorySource = "gitlab" | "github";
+
 type AnalysePageState = {
   repoUrl?: string;
   projectName?: string;
   autoAnalyse?: boolean;
+  source?: RepositorySource;
+  level?: string;
 };
 
 type SuggestedIssue = {
@@ -32,6 +36,22 @@ type LanguageOption = {
   instruction: string;
 };
 
+type GitHubRepoInfo = {
+  id: number;
+  name: string;
+  full_name: string;
+  description: string | null;
+  html_url: string;
+  default_branch?: string;
+  owner: string;
+  repo: string;
+};
+
+type GitHubTreeItem = {
+  path: string;
+  type: "blob" | "tree";
+};
+
 const languageOptions: LanguageOption[] = [
   {
     label: "English",
@@ -42,7 +62,7 @@ const languageOptions: LanguageOption[] = [
     label: "中文",
     value: "Chinese",
     instruction: "请用清楚、适合初学者理解的中文回答。",
-  }
+  },
 ];
 
 const levelDescriptions: Record<number, string> = {
@@ -53,15 +73,197 @@ const levelDescriptions: Record<number, string> = {
   5: "Expert. Use deep technical explanation, architecture reasoning, and improvement strategy.",
 };
 
+const parseGitHubUrl = (repoUrl: string) => {
+  const cleanUrl = repoUrl.trim().replace(/\.git$/, "");
+
+  const match = cleanUrl.match(/github\.com[/:]([^/]+)\/([^/#?]+)/);
+
+  if (!match) {
+    throw new Error("Invalid GitHub repository URL.");
+  }
+
+  return {
+    owner: match[1],
+    repo: match[2].replace(/\.git$/, ""),
+  };
+};
+
+const githubHeaders = (
+  token: string,
+  accept = "application/vnd.github+json"
+) => {
+  return {
+    Accept: accept,
+    "X-GitHub-Api-Version": "2022-11-28",
+    ...(token.trim() ? { Authorization: `Bearer ${token}` } : {}),
+  };
+};
+
+const throwGitHubError = async (response: Response, fallback: string) => {
+  const data = await response.json().catch(() => null);
+  throw new Error(data?.message || fallback);
+};
+
+const getGitHubRepo = async (
+  repoUrl: string,
+  token: string
+): Promise<GitHubRepoInfo> => {
+  const { owner, repo } = parseGitHubUrl(repoUrl);
+
+  const response = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}`,
+    {
+      headers: githubHeaders(token),
+    }
+  );
+
+  if (!response.ok) {
+    await throwGitHubError(response, "Failed to fetch GitHub repository.");
+  }
+
+  const data = await response.json();
+
+  return {
+    id: data.id,
+    name: data.name,
+    full_name: data.full_name,
+    description: data.description,
+    html_url: data.html_url,
+    default_branch: data.default_branch,
+    owner,
+    repo,
+  };
+};
+
+const getGitHubRepositoryTree = async (
+  owner: string,
+  repo: string,
+  token: string,
+  branch: string
+): Promise<GitHubTreeItem[]> => {
+  const response = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(
+      branch
+    )}?recursive=1`,
+    {
+      headers: githubHeaders(token),
+    }
+  );
+
+  if (!response.ok) {
+    await throwGitHubError(response, "Failed to fetch GitHub repository tree.");
+  }
+
+  const data = await response.json();
+
+  return data.tree || [];
+};
+
+const getGitHubRawFile = async (
+  owner: string,
+  repo: string,
+  token: string,
+  filePath: string,
+  branch: string
+): Promise<string> => {
+  const encodedPath = filePath
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+
+  const response = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(
+      branch
+    )}`,
+    {
+      headers: githubHeaders(token, "application/vnd.github.raw"),
+    }
+  );
+
+  if (!response.ok) {
+    await throwGitHubError(response, `Failed to fetch file: ${filePath}`);
+  }
+
+  return response.text();
+};
+
+const createGitHubIssue = async (
+  owner: string,
+  repo: string,
+  token: string,
+  title: string,
+  description: string
+) => {
+  if (!token.trim()) {
+    throw new Error("GitHub token is required to create an issue.");
+  }
+
+  const response = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/issues`,
+    {
+      method: "POST",
+      headers: {
+        ...githubHeaders(token),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        title,
+        body: description,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    await throwGitHubError(response, "Failed to create GitHub issue.");
+  }
+
+  return response.json();
+};
+
+const isImportantFile = (filePath: string) => {
+  const path = filePath.toLowerCase();
+
+  return (
+    path === "readme.md" ||
+    path === "package.json" ||
+    path === "requirements.txt" ||
+    path === "pom.xml" ||
+    path === "build.gradle" ||
+    path === "build.gradle.kts" ||
+    path === "vite.config.ts" ||
+    path === "vite.config.js" ||
+    path === "tsconfig.json" ||
+    path === "dockerfile" ||
+    path === "docker-compose.yml" ||
+    path.startsWith("src/") ||
+    path.startsWith("app/") ||
+    path.startsWith("pages/") ||
+    path.startsWith("components/")
+  );
+};
+
 function App() {
   const location = useLocation();
   const routeState = location.state as AnalysePageState | null;
+
   const [repoUrl, setRepoUrl] = useState(() => {
-  return routeState?.repoUrl || "";
-});
+    return routeState?.repoUrl || "";
+  });
+
+  const [source, setSource] = useState<RepositorySource>(() => {
+    if (routeState?.source) return routeState.source;
+    if (routeState?.repoUrl?.includes("github.com")) return "github";
+    return "gitlab";
+  });
+
   const [gitlabToken, setGitlabToken] = useState(() => {
     return localStorage.getItem("gitlabToken") || "";
   });
+
+  const [githubToken, setGithubToken] = useState(() => {
+    return localStorage.getItem("githubToken") || "";
+  });
+
   const [geminiKey, setGeminiKey] = useState(() => {
     return localStorage.getItem("geminiKey") || "";
   });
@@ -69,7 +271,11 @@ function App() {
   const [language, setLanguage] = useState(() => {
     return localStorage.getItem("explanationLanguage") || "English";
   });
+
   const [techLevel, setTechLevel] = useState(() => {
+    const routeLevel = Number(routeState?.level);
+    if (routeLevel >= 1 && routeLevel <= 5) return routeLevel;
+
     return Number(localStorage.getItem("technologyLevel")) || 2;
   });
 
@@ -78,9 +284,18 @@ function App() {
   const [explanation, setExplanation] = useState("");
   const [issues, setIssues] = useState<SuggestedIssue[]>([]);
 
+  const [repositoryRef, setRepositoryRef] = useState<{
+    source: RepositorySource;
+    gitlabProjectId?: number;
+    githubOwner?: string;
+    githubRepo?: string;
+  } | null>(null);
+
   const selectedLanguage =
     languageOptions.find((option) => option.value === language) ||
     languageOptions[0];
+
+  const platformName = source === "github" ? "GitHub" : "GitLab";
 
   const parseIssues = (text: string): SuggestedIssue[] => {
     const cleaned = text
@@ -92,8 +307,13 @@ function App() {
   };
 
   const analyseRepo = async () => {
-    if (!repoUrl.trim() || !gitlabToken.trim() || !geminiKey.trim()) {
-      alert("Please enter the GitLab repo URL, GitLab token, and Gemini API key.");
+    if (!repoUrl.trim() || !geminiKey.trim()) {
+      alert("Please enter the repository URL and Gemini API key.");
+      return;
+    }
+
+    if (source === "gitlab" && !gitlabToken.trim()) {
+      alert("Please enter your GitLab token.");
       return;
     }
 
@@ -101,54 +321,99 @@ function App() {
       setLoading(true);
       setExplanation("");
       setIssues([]);
+      setProjectId(null);
+      setRepositoryRef(null);
 
-      const project = await getProjectId(repoUrl, gitlabToken);
-      setProjectId(project.id);
-
-      const tree = await getRepositoryTree(project.id, gitlabToken);
-
-      const importantFiles = tree
-        .filter((item) => item.type === "blob")
-        .filter((item) => {
-          const path = item.path.toLowerCase();
-
-          return (
-            path === "readme.md" ||
-            path === "package.json" ||
-            path === "requirements.txt" ||
-            path === "pom.xml" ||
-            path === "build.gradle" ||
-            path === "vite.config.ts" ||
-            path === "vite.config.js" ||
-            path === "tsconfig.json" ||
-            path.startsWith("src/") ||
-            path.startsWith("app/") ||
-            path.startsWith("pages/") ||
-            path.startsWith("components/")
-          );
-        })
-        .slice(0, 14);
-
+      let repositoryName = "";
+      let repositoryDescription = "";
+      let repositoryWebUrl = "";
       const files: AnalysedFile[] = [];
 
-      for (const file of importantFiles) {
-        const content = await getRawFile(
-          project.id,
-          file.path,
-          gitlabToken,
-          project.default_branch || "main"
+      if (source === "gitlab") {
+        const project = await getProjectId(repoUrl, gitlabToken);
+
+        setProjectId(project.id);
+        setRepositoryRef({
+          source: "gitlab",
+          gitlabProjectId: project.id,
+        });
+
+        repositoryName = project.name;
+        repositoryDescription = project.description || "No description";
+        repositoryWebUrl = project.web_url;
+
+        const tree = await getRepositoryTree(project.id, gitlabToken);
+
+        const importantFiles = tree
+          .filter((item) => item.type === "blob")
+          .filter((item) => isImportantFile(item.path))
+          .slice(0, 14);
+
+        for (const file of importantFiles) {
+          const content = await getRawFile(
+            project.id,
+            file.path,
+            gitlabToken,
+            project.default_branch || "main"
+          );
+
+          if (content.trim()) {
+            files.push({
+              path: file.path,
+              content: content.slice(0, 5000),
+            });
+          }
+        }
+      }
+
+      if (source === "github") {
+        const repo = await getGitHubRepo(repoUrl, githubToken);
+
+        setProjectId(repo.id);
+        setRepositoryRef({
+          source: "github",
+          githubOwner: repo.owner,
+          githubRepo: repo.repo,
+        });
+
+        repositoryName = repo.name;
+        repositoryDescription = repo.description || "No description";
+        repositoryWebUrl = repo.html_url;
+
+        const branch = repo.default_branch || "main";
+
+        const tree = await getGitHubRepositoryTree(
+          repo.owner,
+          repo.repo,
+          githubToken,
+          branch
         );
 
-        if (content.trim()) {
-          files.push({
-            path: file.path,
-            content: content.slice(0, 5000),
-          });
+        const importantFiles = tree
+          .filter((item) => item.type === "blob")
+          .filter((item) => isImportantFile(item.path))
+          .slice(0, 14);
+
+        for (const file of importantFiles) {
+          const content = await getGitHubRawFile(
+            repo.owner,
+            repo.repo,
+            githubToken,
+            file.path,
+            branch
+          );
+
+          if (content.trim()) {
+            files.push({
+              path: file.path,
+              content: content.slice(0, 5000),
+            });
+          }
         }
       }
 
       const prompt = `
-You are an AI GitLab repository teacher.
+You are an AI ${platformName} repository teacher.
 
 The user selected this output language:
 ${selectedLanguage.value}
@@ -190,18 +455,21 @@ Please include:
    - Give clear setup steps.
    - Mention possible commands if they can be inferred.
 
-7. 5 suggested GitLab issues
+7. 5 suggested ${platformName} issues
    - Each issue must include:
      - title
      - why it matters
      - how to fix it
      - difficulty: easy / medium / hard
 
+Repository platform:
+${platformName}
+
 Repository name:
-${project.name}
+${repositoryName}
 
 Repository description:
-${project.description || "No description"}
+${repositoryDescription}
 
 Files:
 ${files
@@ -218,7 +486,7 @@ ${file.content}
       setExplanation(result);
 
       const issuePrompt = `
-Based on this repository analysis, create exactly 5 GitLab issues.
+Based on this repository analysis, create exactly 5 ${platformName} issues.
 
 Return ONLY valid JSON.
 No markdown.
@@ -250,8 +518,8 @@ ${result}
 
       try {
         await saveProjectHistory({
-          projectName: project.name,
-          repoUrl: project.web_url,
+          projectName: repositoryName,
+          repoUrl: repositoryWebUrl,
           keyword: "",
           techStack: "",
           level: String(techLevel),
@@ -263,7 +531,9 @@ ${result}
         alert("Analysis saved to your history!");
       } catch (saveError) {
         console.error("Failed to save history:", saveError);
-        alert("Analysis finished, but history was not saved. Please login with Google first.");
+        alert(
+          "Analysis finished, but history was not saved. Please login with Google first."
+        );
       }
     } catch (error) {
       alert(error instanceof Error ? error.message : "Something went wrong.");
@@ -273,17 +543,44 @@ ${result}
   };
 
   const handleCreateIssue = async (issue: SuggestedIssue) => {
-    if (!projectId) return;
+    if (!repositoryRef) {
+      alert("Please analyse a repository first.");
+      return;
+    }
 
     try {
-      await createGitLabIssue(
-        projectId,
-        gitlabToken,
-        issue.title,
-        issue.description
-      );
+      if (repositoryRef.source === "gitlab") {
+        if (!repositoryRef.gitlabProjectId) {
+          alert("GitLab project ID is missing.");
+          return;
+        }
 
-      alert("Issue created in GitLab!");
+        await createGitLabIssue(
+          repositoryRef.gitlabProjectId,
+          gitlabToken,
+          issue.title,
+          issue.description
+        );
+
+        alert("Issue created in GitLab!");
+      }
+
+      if (repositoryRef.source === "github") {
+        if (!repositoryRef.githubOwner || !repositoryRef.githubRepo) {
+          alert("GitHub repository information is missing.");
+          return;
+        }
+
+        await createGitHubIssue(
+          repositoryRef.githubOwner,
+          repositoryRef.githubRepo,
+          githubToken,
+          issue.title,
+          issue.description
+        );
+
+        alert("Issue created in GitHub!");
+      }
     } catch (error) {
       alert(error instanceof Error ? error.message : "Failed to create issue.");
     }
@@ -292,12 +589,11 @@ ${result}
   return (
     <main className="app">
       <section className="hero-section">
-        <div className="hero-badge">AI GitLab Repository Assistant</div>
+        <div className="hero-badge">AI Repository Assistant</div>
 
         <h1>
-          <span> Learn at your level.</span>
+          <span>Learn at your level.</span>
         </h1>
-        
       </section>
 
       <section className="content-grid">
@@ -307,20 +603,46 @@ ${result}
               <p className="eyebrow">Repository input</p>
               <h2>Analyse a project</h2>
             </div>
+
             <div className="status-pill">
               {loading ? "Running" : projectId ? "Ready" : "Idle"}
             </div>
           </div>
 
           <label className="input-group">
-            <span>GitLab repository URL</span>
+            <span>Repository source</span>
+            <select
+              value={source}
+              onChange={(e) => {
+                const nextSource = e.target.value as RepositorySource;
+                setSource(nextSource);
+
+                if (nextSource === "github" && repoUrl.includes("gitlab.com")) {
+                  setRepoUrl("");
+                }
+
+                if (nextSource === "gitlab" && repoUrl.includes("github.com")) {
+                  setRepoUrl("");
+                }
+              }}
+            >
+              <option value="gitlab">GitLab</option>
+              <option value="github">GitHub</option>
+            </select>
+          </label>
+
+          <label className="input-group">
+            <span>{platformName} repository URL</span>
             <input
-              placeholder="https://gitlab.com/group/project"
+              placeholder={
+                source === "github"
+                  ? "https://github.com/owner/repository"
+                  : "https://gitlab.com/group/project"
+              }
               value={repoUrl}
               onChange={(e) => setRepoUrl(e.target.value)}
             />
           </label>
-         
 
           <div className="settings-grid">
             <label className="input-group">
@@ -358,6 +680,7 @@ ${result}
                   </button>
                 ))}
               </div>
+
               <p className="level-helper">
                 {techLevel}/5 · {levelDescriptions[techLevel]}
               </p>
@@ -375,7 +698,7 @@ ${result}
                 Analysing repository...
               </>
             ) : (
-              "Analyse Repository"
+              `Analyse ${platformName} Repository`
             )}
           </button>
         </div>
@@ -387,15 +710,22 @@ ${result}
           <div className="feature-list">
             <div>
               <span className="feature-icon">🌐</span>
+              <p>Choose GitLab or GitHub repository analysis</p>
+            </div>
+
+            <div>
+              <span className="feature-icon">🌐</span>
               <p>Choose the language for the project explanation</p>
             </div>
+
             <div>
               <span className="feature-icon">⭐</span>
               <p>Choose 1–5 stars for the technology level</p>
             </div>
+
             <div>
               <span className="feature-icon">✅</span>
-              <p>Get five GitLab issues with clear fix steps</p>
+              <p>Get five suggested issues with clear fix steps</p>
             </div>
           </div>
         </aside>
@@ -410,8 +740,11 @@ ${result}
             </div>
 
             <div className="result-tags">
+              <span>{platformName}</span>
               <span>{selectedLanguage.label}</span>
-              <span>{"⭐".repeat(techLevel)} {techLevel}/5</span>
+              <span>
+                {"⭐".repeat(techLevel)} {techLevel}/5
+              </span>
             </div>
           </div>
 
@@ -424,7 +757,7 @@ ${result}
           <div className="section-title">
             <div>
               <p className="eyebrow">Suggested work</p>
-              <h2>GitLab Issues</h2>
+              <h2>{platformName} Issues</h2>
             </div>
           </div>
 
@@ -442,7 +775,7 @@ ${result}
                   className="secondary-button"
                   onClick={() => handleCreateIssue(issue)}
                 >
-                  Create Issue in GitLab
+                  Create Issue in {platformName}
                 </button>
               </article>
             ))}

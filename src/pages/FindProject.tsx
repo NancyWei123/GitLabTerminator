@@ -1,6 +1,23 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+type ProjectSource = "gitlab" | "github";
+
+type Project = {
+  source: ProjectSource;
+  id: number;
+  name: string;
+  path_with_namespace: string;
+  description: string | null;
+  web_url: string;
+  star_count: number;
+  forks_count: number;
+  last_activity_at: string;
+  default_branch?: string;
+  topics?: string[];
+  language?: string | null;
+};
+
 type GitLabProject = {
   id: number;
   name: string;
@@ -14,15 +31,35 @@ type GitLabProject = {
   topics?: string[];
 };
 
+type GitHubRepo = {
+  id: number;
+  name: string;
+  full_name: string;
+  description: string | null;
+  html_url: string;
+  stargazers_count: number;
+  forks_count: number;
+  updated_at: string;
+  default_branch?: string;
+  topics?: string[];
+  language?: string | null;
+};
+
+type GitHubSearchResponse = {
+  items: GitHubRepo[];
+  message?: string;
+};
+
 function FindProject() {
   const navigate = useNavigate();
 
+  const [source, setSource] = useState<ProjectSource>("gitlab");
   const [keyword, setKeyword] = useState("");
   const [techStack, setTechStack] = useState("");
   const [level, setLevel] = useState("1");
   const [minStars, setMinStars] = useState("0");
 
-  const [projects, setProjects] = useState<GitLabProject[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -43,6 +80,39 @@ function FindProject() {
     }
   };
 
+  const mapGitLabProject = (project: GitLabProject): Project => {
+    return {
+      source: "gitlab",
+      id: project.id,
+      name: project.name,
+      path_with_namespace: project.path_with_namespace,
+      description: project.description,
+      web_url: project.web_url,
+      star_count: project.star_count,
+      forks_count: project.forks_count,
+      last_activity_at: project.last_activity_at,
+      default_branch: project.default_branch,
+      topics: project.topics,
+    };
+  };
+
+  const mapGitHubRepo = (repo: GitHubRepo): Project => {
+    return {
+      source: "github",
+      id: repo.id,
+      name: repo.name,
+      path_with_namespace: repo.full_name,
+      description: repo.description,
+      web_url: repo.html_url,
+      star_count: repo.stargazers_count,
+      forks_count: repo.forks_count,
+      last_activity_at: repo.updated_at,
+      default_branch: repo.default_branch,
+      topics: repo.topics,
+      language: repo.language,
+    };
+  };
+
   const findProjects = async () => {
     if (!keyword.trim() && !techStack.trim()) {
       setError("Please enter a keyword or technology stack.");
@@ -61,21 +131,60 @@ function FindProject() {
       setError("");
       setProjects([]);
 
-      const searchText = `${keyword} ${techStack} ${getLevelText(level)}`.trim();
+      let normalizedProjects: Project[] = [];
 
-      const response = await fetch(
-        `https://gitlab.com/api/v4/projects?search=${encodeURIComponent(
-          searchText
-        )}&simple=true&per_page=50&order_by=star_count&sort=desc`
-      );
+      if (source === "gitlab") {
+        const searchText = `${keyword} ${techStack} ${getLevelText(
+          level
+        )}`.trim();
 
-      if (!response.ok) {
-        throw new Error("Failed to fetch GitLab projects.");
+        const response = await fetch(
+          `https://gitlab.com/api/v4/projects?search=${encodeURIComponent(
+            searchText
+          )}&simple=true&per_page=50&order_by=star_count&sort=desc`
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch GitLab projects.");
+        }
+
+        const data: GitLabProject[] = await response.json();
+        normalizedProjects = data.map(mapGitLabProject);
       }
 
-      const data: GitLabProject[] = await response.json();
+      if (source === "github") {
+        const githubQuery = [
+          keyword.trim(),
+          techStack.trim(),
+          getLevelText(level),
+          minStarNumber > 0 ? `stars:>=${minStarNumber}` : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
 
-      const filteredProjects = data
+        const response = await fetch(
+          `https://api.github.com/search/repositories?q=${encodeURIComponent(
+            githubQuery
+          )}&sort=stars&order=desc&per_page=50`,
+          {
+            headers: {
+              Accept: "application/vnd.github+json",
+            },
+          }
+        );
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => null);
+          throw new Error(
+            errorData?.message || "Failed to fetch GitHub projects."
+          );
+        }
+
+        const data: GitHubSearchResponse = await response.json();
+        normalizedProjects = data.items.map(mapGitHubRepo);
+      }
+
+      const filteredProjects = normalizedProjects
         .filter((project) => project.star_count >= minStarNumber)
         .slice(0, 12);
 
@@ -91,7 +200,7 @@ function FindProject() {
     }
   };
 
-  const analyseProject = (project: GitLabProject) => {
+  const analyseProject = (project: Project) => {
     const searchText = `${keyword} ${techStack}`.trim();
     const levelText = getLevelText(level);
 
@@ -100,6 +209,7 @@ function FindProject() {
         project,
         repoUrl: project.web_url,
         projectId: project.id,
+        source: project.source,
         level,
         levelText,
         keyword,
@@ -115,16 +225,28 @@ function FindProject() {
       <div className="find-project-hero">
         <span className="page-badge">PROJECT DISCOVERY</span>
 
-        <h1>Find a suitable GitLab project</h1>
+        <h1>Find a suitable open-source project</h1>
 
         <p>
-          Search by keyword, technology stack, technology level, and minimum
-          stars. Then click Analyse Project to understand the repository.
+          Search GitLab or GitHub by keyword, technology stack, technology
+          level, and minimum stars. Then click Analyse Project to understand the
+          repository.
         </p>
       </div>
 
       <div className="find-project-card">
         <div className="form-grid">
+          <div className="form-group">
+            <label>Source</label>
+            <select
+              value={source}
+              onChange={(e) => setSource(e.target.value as ProjectSource)}
+            >
+              <option value="gitlab">GitLab</option>
+              <option value="github">GitHub</option>
+            </select>
+          </div>
+
           <div className="form-group">
             <label>Keyword</label>
             <input
@@ -171,8 +293,8 @@ function FindProject() {
         <div className="level-preview">
           <span>Selected filters:</span>
           <strong>
-            Level {level} / 5 · {getLevelText(level)} · Stars ≥{" "}
-            {minStars || 0}
+            {source === "github" ? "GitHub" : "GitLab"} · Level {level} / 5 ·{" "}
+            {getLevelText(level)} · Stars ≥ {minStars || 0}
           </strong>
         </div>
 
@@ -183,26 +305,36 @@ function FindProject() {
           onClick={findProjects}
           disabled={loading}
         >
-          {loading ? "Searching..." : "Find Projects"}
+          {loading
+            ? `Searching ${source === "github" ? "GitHub" : "GitLab"}...`
+            : "Find Projects"}
         </button>
       </div>
 
       <div className="project-results">
         {projects.map((project) => (
-          <div className="project-card" key={project.id}>
+          <div className="project-card" key={`${project.source}-${project.id}`}>
             <div className="project-card-header">
               <h3>{project.name}</h3>
               <span>{project.star_count} ★</span>
             </div>
 
-            <p className="project-namespace">{project.path_with_namespace}</p>
+            <p className="project-namespace">
+              {project.path_with_namespace}
+            </p>
 
             <p className="project-description">
               {project.description || "No description provided."}
             </p>
 
             <div className="project-meta">
+              <span>
+                Source: {project.source === "github" ? "GitHub" : "GitLab"}
+              </span>
+
               <span>Forks: {project.forks_count}</span>
+
+              {project.language && <span>Language: {project.language}</span>}
 
               <span>
                 Updated:{" "}
@@ -223,7 +355,7 @@ function FindProject() {
                 target="_blank"
                 rel="noreferrer"
               >
-                Open GitLab
+                Open {project.source === "github" ? "GitHub" : "GitLab"}
               </a>
 
               <button
